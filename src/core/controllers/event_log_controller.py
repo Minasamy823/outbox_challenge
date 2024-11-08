@@ -37,13 +37,13 @@ class EventLogController:
                                   entries_pk: Optional[int] = None
                                   ) -> QuerySet:
 
-        filters = dict()
+        filters = {
+            "status": Status.SCHEDULED
+        }
 
         if entries_pk:
-            filters = {
-                "pk__in": entries_pk
-            }
+            filters["pk__in"] = entries_pk
 
-        return event_log_box_repository.filter(
-            filters
-        ).order_by('created_at')
+            return event_log_box_repository.filter(
+                filters
+            ).order_by('created_at')
