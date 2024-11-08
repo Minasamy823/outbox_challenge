@@ -1,9 +1,11 @@
 from typing import Any
 
 import structlog
-
+from django.db import transaction
 from core.base_model import Model
-from core.event_log_client import EventLogClient
+from core.models import EventLogOutbox
+from core.repositories.event_log_repository import event_log_box_repository
+from core.tasks.outbox_entries_processor_task import OutBoxEntriesProcessorTask
 from core.use_case import UseCase, UseCaseRequest, UseCaseResponse
 from users.models import User
 
@@ -35,33 +37,47 @@ class CreateUser(UseCase):
             'last_name': request.last_name,
         }
 
+    @transaction.atomic()
     def _execute(self, request: CreateUserRequest) -> CreateUserResponse:
-        logger.info('creating a new user')
+        try:
+            logger.info('Creating a new user')
 
-        user, created = User.objects.get_or_create(
-            email=request.email,
-            defaults={
-                'first_name': request.first_name, 'last_name': request.last_name,
-            },
-        )
-
-        if created:
-            logger.info('user has been created')
-            self._log(user)
-            return CreateUserResponse(result=user)
-
-        logger.error('unable to create a new user')
-        return CreateUserResponse(error='User with this email already exists')
-
-    def _log(self, user: User) -> None:
-        with EventLogClient.init() as client:
-            client.insert(
-                data=[
-                    UserCreated(
-                        email=user.email,
-                        first_name=user.first_name,
-                        last_name=user.last_name,
-                    ),
-                ],
+            user, created = User.objects.get_or_create(
+                email=request.email,
+                defaults={
+                    'first_name': request.first_name, 'last_name': request.last_name,
+                },
             )
 
+            if created:
+                logger.info('User has been created')
+                event_log_obj = self._log(user)
+
+                OutBoxEntriesProcessorTask.delay(
+                    [event_log_obj.pk]
+                )
+
+                return CreateUserResponse(result=user)
+
+            logger.error('Unable to create a new user')
+            return CreateUserResponse(error='User with this email already exists')
+
+        except Exception as err:
+            logger.error(f'Received error while creating a user -> {err}')
+
+    def _log(self, user: User) -> EventLogOutbox:
+        logger.info('Creating log in event_log_box_repository')
+
+        log_obj: EventLogOutbox = event_log_box_repository.create(
+            event_type='creating user',
+            destination='clickhouse',
+            event_context=UserCreated(
+                email=user.email,
+                first_name=user.first_name,
+                last_name=user.last_name,
+            ).dict()
+        )
+
+        return log_obj
+
+        logger.info('Successfully created log in event_log_box_repository')

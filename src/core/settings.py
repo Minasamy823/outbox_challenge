@@ -4,6 +4,7 @@ from pathlib import Path
 import environ
 import sentry_sdk
 import structlog
+from celery.schedules import crontab
 
 env = environ.Env(
     DEBUG=(bool, False),
@@ -30,6 +31,7 @@ INSTALLED_APPS = [
 
     # project apps
     'users',
+    'core',
 ]
 
 MIDDLEWARE = [
@@ -111,7 +113,13 @@ STATIC_ROOT = env("STATIC_ROOT")
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 CELERY_BROKER = env("CELERY_BROKER", default="redis://localhost:6379/0")
-CELERY_ALWAYS_EAGER = env("CELERY_ALWAYS_EAGER", default=DEBUG)
+CELERY_TASK_ALWAYS_EAGER = env("CELERY_TASK_ALWAYS_EAGER", default=DEBUG)
+CELERY_BEAT_SCHEDULE = {
+    'run-process-outbox-every-5-minutes': {
+        'task': 'core.tasks.outbox_entries_processor_task',
+        'schedule': crontab(minute='*/5'),  # every 5 minutes
+    },
+}
 
 LOG_FORMATTER = env("LOG_FORMATTER", default="console")
 LOG_LEVEL = env("LOG_LEVEL", default="INFO")

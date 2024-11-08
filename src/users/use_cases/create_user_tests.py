@@ -6,7 +6,10 @@ import pytest
 from clickhouse_connect.driver import Client
 from django.conf import settings
 
-from users.use_cases import CreateUser, CreateUserRequest, UserCreated
+from core.models import Status
+from core.repositories.event_log_repository import event_log_box_repository
+from core.schemas.event_log_schema import EventLogOutboxBaseModel
+from users.use_cases import CreateUser, CreateUserRequest
 
 pytestmark = [pytest.mark.django_db]
 
@@ -49,20 +52,31 @@ def test_event_log_entry_published(
     f_use_case: CreateUser,
     f_ch_client: Client,
 ) -> None:
+    assert not event_log_box_repository.filter(
+        {}
+    )
+
     email = f'test_{uuid.uuid4()}@email.com'
     request = CreateUserRequest(
         email=email, first_name='Test', last_name='Testovich',
     )
 
     f_use_case.execute(request)
-    log = f_ch_client.query("SELECT * FROM default.event_log WHERE event_type = 'user_created'")
+
+    event_log_obj = event_log_box_repository.filter({}).first()
+
+    assert event_log_obj
+
+    assert event_log_obj.status == Status.SUCCEEDED
+
+    log = f_ch_client.query("SELECT * FROM default.event_log WHERE event_type = 'event_log_outbox_base_model'")
 
     assert log.result_rows == [
         (
-            'user_created',
+            'event_log_outbox_base_model',
             ANY,
             'Local',
-            UserCreated(email=email, first_name='Test', last_name='Testovich').model_dump_json(),
+            EventLogOutboxBaseModel.from_orm(event_log_obj).model_dump_json(),
             1,
         ),
     ]
